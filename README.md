@@ -4,7 +4,8 @@ This is a simple server to serve webpages out of user home directories. It doesn
 do HTTPS, so you should probably put it behind a reverse proxy.
 
 Currently, this project features no functionality beyond what is possible with any
-other web server, but I intend to add more features in the future.
+popular web server (NGINX, Apache, etc.), but I intend to add more features in the
+future.
 
 To run, pass in a single command line argument which is the port to which the server
 will bind. The server will attempt to serve pages out of the ``www`` directory
