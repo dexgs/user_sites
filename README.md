@@ -8,6 +8,7 @@ popular web server (NGINX, Apache, etc.), but I intend to add more features in t
 future.
 
 ## Planned Features
+- List available user pages
 - Automatically create directory indices
 - Simple server-side rendering
 - Handle POST requests
