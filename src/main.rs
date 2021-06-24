@@ -7,6 +7,8 @@ use std::fs::{OpenOptions, File};
 use std::io::Result;
 use std::result::Result as StdResult;
 
+mod error_pages;
+
 fn main() -> StdResult<(), Error> {
     let port = env::args().nth(1).unwrap().parse()?;
     let server = MicroHTTP::new(("0.0.0.0", port))?;
@@ -32,26 +34,36 @@ fn handle_client(mut client: Client) -> Option<()> {
         }
     });
     // Assuming first component is / and second is user name
-    let user = components.nth(1)?;
-    if let Component::Normal(_) = user {
-        let home_dir = Path::new("/home").join(user).join("www");
-        let mut file_path = home_dir.join(
-            components.fold(PathBuf::new(), |mut p, c| { p.push(c); p }));
+    let user = components.nth(1);
+    match user {
+        // The path refers to a resource other than the root
+        Some(user) => {
+            let home_dir = Path::new("/home").join(user).join("www");
+            let mut file_path = home_dir.join(
+                components.fold(PathBuf::new(), |mut p, c| { p.push(c); p }));
 
-        if file_path.is_dir() {
-            file_path.push("index.html");
-        }
+            if file_path.is_dir() {
+                file_path.push("index.html");
+            }
 
-        if file_path.exists() {
-            match open_file(file_path) {
-                Ok((file, size)) => client.respond_ok_chunked(file, size)
-                    .expect("Serving file to client"),
-                Err(_) => client.respond("500 Internal Server Error", &[], &vec![])
-                    .expect("Reporting error to client"),
-            };
-        } else {
-            client.respond("404 Not Found", &[], &vec![])
-                .expect("Reporting error to client");
+            if file_path.exists() {
+                match open_file(file_path) {
+                    Ok((file, size)) => client.respond_ok_chunked(file, size)
+                        .expect("Serving file to client"),
+                    Err(_) => client.respond("500 Internal Server Error",
+                                             error_pages::ERROR_500.as_bytes(), &vec![])
+                        .expect("Reporting error to client"),
+                };
+            } else {
+                client.respond("404 Not Found", error_pages::ERROR_404.as_bytes(), &vec![])
+                    .expect("Reporting error to client");
+            }
+        },
+        // The path is just the root
+        None => {
+            // Serve autoindexed page later, but for now just return 404
+            client.respond("404 Not Found", error_pages::ERROR_404.as_bytes(), &vec![])
+                    .expect("Reporting error to client");
         }
     }
     None
