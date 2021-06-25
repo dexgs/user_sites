@@ -144,23 +144,32 @@ enum UpdateType {
 }
 
 fn update_shared_data(shared: &SharedData, path: &PathBuf, update_type: UpdateType) {
-    let mut shared = shared.lock().unwrap();
-    match shared.get_mut(path) {
+    let mut lock = shared.lock().unwrap();
+    let do_decrement = match lock.get_mut(path) {
         Some((num_accessors, _)) => {
             match update_type {
-                UpdateType::Accessing => *num_accessors += 1,
-                UpdateType::Closing => {
-                    std::thread::sleep(Duration::from_secs(1));
-                    *num_accessors -= 1
-                }
-            }
-            if *num_accessors == 0 {
-                shared.remove(path);
+                UpdateType::Accessing => {
+                    *num_accessors += 1;
+                    false
+                },
+                UpdateType::Closing => true
             }
         },
         None => {
             if let UpdateType::Accessing = update_type {
-                shared.insert(path.to_owned(), (1, None));
+                lock.insert(path.to_owned(), (1, None));
+            }
+            false
+        }
+    };
+    drop(lock);
+    if do_decrement {
+        std::thread::sleep(Duration::from_secs(1));
+        let mut lock = shared.lock().unwrap();
+        if let Some((num_accessors, _)) = lock.get_mut(path) {
+            *num_accessors -= 1;
+            if *num_accessors == 0 {
+                lock.remove(path);
             }
         }
     }
