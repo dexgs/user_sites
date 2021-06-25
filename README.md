@@ -17,8 +17,8 @@ in a user's home dir. For example, running the server on port 1234 would make
 ### Serve Static Files
 The root of a user's website is ``~/www``. The contents of this directory and its
 sub-directories will be exposed to the internet. Placing a file called ``index.html``
-in a directory will prompt to serve that file when the directory is accessed. For
-example: Accessing ``http://localhost:1234/user/my_page/`` will serve
+in a directory will serve that file when the directory is accessed. For example:
+Accessing ``http://localhost:1234/user/my_page/`` will serve
 ``/home/user/www/my_page/index.html`` (if it exists).
 
 ### Server-Side Rendering
@@ -29,7 +29,7 @@ that was accessed and the second (currently unsupported, but coming soon) will
 be the query string from the request.
 
 ### Auto-Indexed Directories
-If a directory is accessed and it contains neither an ``index.html`` file or an
+If a directory is accessed and it contains neither an ``index.html`` file nor an
 ``index_executable`` file, a directory index will automatically be generated and
 served. The generated page can be customized by including the following files in
 the directory:
