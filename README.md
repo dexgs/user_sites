@@ -61,5 +61,5 @@ to be handled by a program placed in a location to which one can POST.
 
 ### Allow WebSocket Connections
 I would also like for it to be possible to supply a program which will handle
-WebSocket connections. This would probably work by piping the stdin and stout/
+WebSocket connections. This would probably work by piping the stdin, stout, and
 stderr of the program.
