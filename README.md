@@ -33,11 +33,13 @@ If a directory is accessed and it contains neither an ``index.html`` file nor an
 ``index_executable`` file, a directory index will automatically be generated and
 served. The generated page can be customized by including the following files in
 the directory:
+
 - ``title``: The page's title will be set to the contents of this file
 - ``header.html``: The contents of this file will be inserted at the top of the
     page's ``<body>`` tag.
 - ``footer.html``: The contents of this file will be inserted at the bottom of
     the page's ``<body>`` tag.
 - ``styles.css``: The page will try to apply this stylesheet.
+
 By default, all of these files are hidden from the directory index via a CSS rule,
 but this can be undone by overriding it in ``styles.css``.
