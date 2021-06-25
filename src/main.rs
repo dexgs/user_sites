@@ -120,11 +120,10 @@ fn handle_get(file_path: &PathBuf, query: &str, mut client: Client, shared: &Sha
                 .arg(query)
                 .stdout(Stdio::piped())
                 .spawn()?;
-            // A value of 1 for the Content-Size header is not valid HTTP, but modern
-            // browsers can still handle it and being able to do this is much nicer than
-            // having to read the whole output into a buffer in order to get an accurate
-            // size before sending it.
-            client.respond_ok_chunked(child_process.stdout.expect("Capturing stdout"), 1)?;
+            // This is a really nasty hack, but to get around the requirement of
+            // the content length header, just set it to the max possible value.
+            // modern browsers will be able to handle this even if it's not standard.
+            client.respond_ok_chunked(child_process.stdout.expect("Capturing stdout"), usize::MAX)?;
         } else {
             // serve file
             match open_file(file_path) {
