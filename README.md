@@ -52,3 +52,14 @@ location ~ ^/~(?<name>.*)$ {
     proxy_pass http://127.0.0.1:1234/$name;
 }
 ```
+
+## Planned Features
+
+### Handle POST requests
+Similar to the server-side rendering feature, I would like for POST requests
+to be handled by a program placed in a location to which one can POST.
+
+### Allow WebSocket Connections
+I would also like for it to be possible to supply a program which will handle
+WebSocket connections. This would probably work by piping the stdin and stout/
+stderr of the program.
