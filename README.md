@@ -43,3 +43,12 @@ the directory:
 
 By default, all of these files are hidden from the directory index via a CSS rule,
 but this can be undone by overriding it in ``styles.css``.
+
+## Sample Nginx Configuration
+This is how you can proxy this program running on port ``1234``:
+```nginx
+location ~ ^/~(?<name>.*)$ {
+    rewrite ^([^.]*[^/])$ $1/ permanent;
+    proxy_pass http://127.0.0.1:1234/$name;
+}
+```
