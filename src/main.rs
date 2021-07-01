@@ -182,15 +182,17 @@ fn handle_post(file_path: &PathBuf, data: &mut Option<FormData>, mut client: Cli
         _ => {}
     }
     let mut child_process = command.spawn()?;
-    if let Some(FormData::Stream(mut reader)) = data.take() {
-        thread::spawn(move || {
-            let mut buffer = [0; 4096];
-            while let Ok(bytes_read) = reader.read(&mut buffer) {
-                if bytes_read == 0 { break; }
-                stdin.write_all(&buffer)
-                    .expect("Writing to stdin");
-            }
-        });
+    if let Some(mut stdin) = child_process.stdin.take() {
+        if let Some(FormData::Stream(mut reader)) = data.take() {
+            thread::spawn(move || {
+                let mut buffer = [0; 4096];
+                while let Ok(bytes_read) = reader.read(&mut buffer) {
+                    if bytes_read == 0 { break; }
+                    stdin.write_all(&buffer)
+                        .expect("Writing to stdin");
+                }
+            });
+        }
     }
     client.respond_ok_chunked(child_process.stdout.expect("Capturing stdout"), usize::MAX)?;
     Ok(())
