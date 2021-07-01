@@ -33,7 +33,7 @@ where F: Fn(Result<DirEntry>) -> Option<DirEntry> {
         } else if m1.is_dir() && m2.is_file() {
             return Ordering::Less;
         }
-        m1.modified().unwrap().cmp(&m2.modified().unwrap())
+        m2.modified().unwrap().cmp(&m1.modified().unwrap())
     });
 
     // Skip the "/home/user/www" and just display the rest of the path
