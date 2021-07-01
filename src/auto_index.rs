@@ -86,7 +86,7 @@ fn format_entry(entry: &DirEntry) -> String {
         name.push_str("/");
     }
     format!("
-            <a href={name} data-modified=\"{last_modified}\" data-size=\"{size}\">{name}<br/></a>",
+            <a href=\"{name}\" data-modified=\"{last_modified}\" data-size=\"{size}\">{name}<br/></a>",
             name=name, last_modified=last_modified, size=size)
 }
 
