@@ -1,5 +1,5 @@
 use std::env;
-use micro_http_server::{MicroHTTP, Client};
+use micro_http_server::{MicroHTTP, Client, Request, FormData};
 use anyhow::Error;
 use std::thread;
 use std::path::{Path, PathBuf, Component};
@@ -37,8 +37,7 @@ fn main() -> StdResult<(), Error> {
 }
 
 fn handle_client(mut client: Client, shared: SharedData) -> Option<()> {
-    let request = client.request().as_ref()?;
-    let path = PathBuf::from(request);
+    let (path, request) = client.request_mut().take()?;
     // Prevent accessing directories that are not descendants of /home by disabling
     // using parent directories (../) in paths.
     let mut components = path.components().filter(|c| {
@@ -66,7 +65,10 @@ fn handle_client(mut client: Client, shared: SharedData) -> Option<()> {
     }
 
     update_shared_data(&shared, &file_path, UpdateType::Accessing);
-    if let Err(e) = handle_get(&file_path, "", client, &shared) { eprintln!("{}", e); }
+    if let Err(e) = match request {
+        Request::GET(query, _) => handle_get(&file_path, query, client, &shared),
+        Request::POST(_, data) => handle_post(&file_path, &data, client)
+    } { eprintln!("{}", e); }
     update_shared_data(&shared, &file_path, UpdateType::Closing);
 
     Some(())
@@ -80,7 +82,7 @@ fn open_file(file_path: PathBuf) -> Result<(File, usize)> {
 }
 
 // Helper function to respond to GET requests
-fn handle_get(file_path: &PathBuf, query: &str, mut client: Client, shared: &SharedData) -> Result<()> {
+fn handle_get(file_path: &PathBuf, mut query: HashMap<String, String>, mut client: Client, shared: &SharedData) -> Result<()> {
     let mut file_path = file_path.to_owned();
 
     if file_path.is_dir() {
@@ -114,10 +116,11 @@ fn handle_get(file_path: &PathBuf, query: &str, mut client: Client, shared: &Sha
             };
             client.respond_ok(index.as_bytes())?;
         } else if file_path.ends_with("index_executable") {
+            filter_env_variables(&mut query);
             // run program
             let child_process = Command::new(file_path.as_os_str())
+                .envs(query)
                 .arg(file_path)
-                .arg(query)
                 .stdout(Stdio::piped())
                 .spawn()?;
             // This is a really nasty hack, but to get around the requirement of
@@ -134,6 +137,10 @@ fn handle_get(file_path: &PathBuf, query: &str, mut client: Client, shared: &Sha
     } else {
         client.respond("404 Not Found", error_pages::ERROR_404.as_bytes(), &vec![])?;
     }
+    Ok(())
+}
+
+fn handle_post(file_path: &PathBuf, data: &Option<FormData>, mut client: Client) -> Result<()> {
     Ok(())
 }
 
@@ -189,5 +196,15 @@ fn get_concurrent_accessors(shared: &SharedData, path: &PathBuf) -> usize {
         *accessors
     } else {
         0
+    }
+}
+
+// Filter out variable definitions that are already present
+fn filter_env_variables(vars: &mut HashMap<String, String>) {
+    for var in vars.keys().map(|k| k.to_owned()).collect::<Vec<String>>() {
+        // Remove var if it is already defined
+        if env::var(&var).is_ok() {
+            vars.remove(&var);
+        }
     }
 }
