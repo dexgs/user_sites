@@ -24,9 +24,18 @@ Accessing ``http://localhost:1234/user/my_page/`` will serve
 ### Server-Side Rendering
 Placing an executable called ``index_executable`` into a directory will cause the
 server to run that executable and relay its output over the web when that directory
-is accessed. The command will be passed 2 arguments. The first will be the path
-that was accessed and the second (currently unsupported, but coming soon) will
-be the query string from the request.
+is accessed. The command will be passed the path that was accessed as an argument.
+The contents of the query string will be available to the program as environment
+variables.
+
+### Handle POST Requests
+This is similar to the server-side rendering feature. Put an executable called
+``form_executable`` at a location to handle POST requests. The program will be
+passed the path to which the POST was made as an argument and will have access
+to the form data. If the form was URL encoded, its values will be available as
+environment variables. If the form was plaintext, it will be passed in as the
+second argument. If the form was multipart, it will be sent to the program's
+stdin.
 
 ### Auto-Indexed Directories
 If a directory is accessed and it contains neither an ``index.html`` file nor an
@@ -54,10 +63,6 @@ location ~ ^/~(?<name>.*)$ {
 ```
 
 ## Planned Features
-
-### Handle POST requests
-Similar to the server-side rendering feature, I would like for POST requests
-to be handled by a program placed in a location to which one can POST.
 
 ### Allow WebSocket Connections
 I would also like for it to be possible to supply a program which will handle
