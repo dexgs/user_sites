@@ -262,8 +262,8 @@ fn get_concurrent_accessors(shared: &SharedData, path: &PathBuf) -> usize {
 // Filter out variable definitions that are already present
 fn filter_env_variables(vars: &mut HashMap<String, String>) {
     for var in vars.keys().map(|k| k.to_owned()).collect::<Vec<String>>() {
-        // Remove var if it is already defined
-        if env::var(&var).is_ok() {
+        // Remove var if it is already defined or all caps
+        if env::var(&var).is_ok() || var == var.to_uppercase() {
             vars.remove(&var);
         }
     }
