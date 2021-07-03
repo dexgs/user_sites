@@ -9,7 +9,7 @@ use chrono::{DateTime, Local};
 const CSS: &'static str = "
         <style>
             a[href=\"footer.html\"], a[href=\"header.html\"], a[href=\"styles.css\"], a[href=\"title\"] {
-                display: none
+                display: none !important;
             }
         </style>
         <link rel=\"stylesheet\" href=\"styles.css\"/>";
