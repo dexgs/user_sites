@@ -6,6 +6,6 @@ edition = "2018"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-micro_http_server = { git = "https://github.com/chili-b/micro-http-server", branch = "dev" }
+micro_http_server = { git = "https://github.com/dexgs/micro-http-server", branch = "master" }
 anyhow = "1.0"
 chrono = "0.4.19"
