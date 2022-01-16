@@ -51,7 +51,7 @@ dependencies = [
 [[package]]
 name = "micro_http_server"
 version = "0.0.3"
-source = "git+https://github.com/chili-b/micro-http-server?branch=dev#bba6c39b3fcf127b2e29751828f909bdfa113887"
+source = "git+https://github.com/dexgs/micro-http-server?branch=master#fc328804b03e2a788f85ef695c19d40e128200c2"
 dependencies = [
  "log",
  "percent-encoding",

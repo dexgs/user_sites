@@ -66,9 +66,9 @@ fn handle_client(mut client: Client, shared: SharedData) -> Option<()> {
         return None;
     }
 
-    update_shared_data(&shared, &file_path, UpdateType::Accessing);
+    let access_number = update_shared_data(&shared, &file_path, UpdateType::Accessing);
     if let Err(e) = match request {
-        Request::GET(query, _) => handle_get(&file_path, query, client, &shared),
+        Request::GET(query, _) => handle_get(&file_path, query, client, &shared, access_number),
         Request::POST(_, mut data) => handle_post(&file_path, &mut data, client)
     } { eprintln!("{}", e); }
     update_shared_data(&shared, &file_path, UpdateType::Closing);
@@ -78,15 +78,17 @@ fn handle_client(mut client: Client, shared: SharedData) -> Option<()> {
 
 
 // Return file handle and reported file size in bytes
-fn open_file(file_path: PathBuf) -> Result<(File, usize)> {
-    let file_handle = OpenOptions::new().read(true).write(false).open(file_path)?;
+fn open_file<P>(file_path: P) -> Result<(File, usize)> 
+where P: AsRef<Path>
+{
+    let file_handle = OpenOptions::new().read(true).write(false).open(file_path.as_ref())?;
     let file_size = file_handle.metadata()?.len() as usize;
     Ok((file_handle, file_size))
 }
 
 
 // Helper function to respond to GET requests
-fn handle_get(file_path: &PathBuf, mut query: HashMap<String, String>, mut client: Client, shared: &SharedData) -> Result<()> {
+fn handle_get(file_path: &PathBuf, mut query: HashMap<String, String>, mut client: Client, shared: &SharedData, access_number: usize) -> Result<()> {
     let mut file_path = file_path.to_owned();
 
     if file_path.is_dir() {
@@ -115,7 +117,7 @@ fn handle_get(file_path: &PathBuf, mut query: HashMap<String, String>, mut clien
                 } else {
                     auto_index::generate_index(&file_path, None, |entry| { entry.ok() })?
                 };
-                set_cache(shared, &file_path, &index);
+                set_cache(shared, &file_path, index.clone());
                 index
             };
             client.respond_ok(index.as_bytes())?;
@@ -133,9 +135,29 @@ fn handle_get(file_path: &PathBuf, mut query: HashMap<String, String>, mut clien
             client.respond_ok_chunked(child_process.stdout.expect("Capturing stdout"), usize::MAX)?;
         } else {
             // serve file
-            match open_file(file_path) {
-                Ok((file, size)) => client.respond_ok_chunked(file, size)?,
-                Err(_) => client.respond("500 Internal Server Error", error_pages::ERROR_500.as_bytes(), &vec![])?
+            match get_cache(shared, &file_path) {
+                Some(cached) => {
+                    client.respond_ok(cached.as_bytes())?;
+                },
+                None => {
+                    match open_file(&file_path) {
+                            Ok((mut file, size)) => {
+                                if access_number == 1 {
+                                    // If this client is the second to concurrently
+                                    // access the file, cache it to reduce I/O
+                                    let mut file_string = String::with_capacity(size);
+                                    file.read_to_string(&mut file_string)
+                                        .expect("Reading file to string");
+                                    set_cache(shared, &file_path, file_string.clone());
+                                    client.respond_ok(file_string.as_bytes())?
+                                } else {
+                                    // Otherwise, just read the file out to the client
+                                    client.respond_ok_chunked(file, size)?
+                                }
+                            },
+                            Err(_) => client.respond("500 Internal Server Error", error_pages::ERROR_500.as_bytes(), &vec![])?
+                    };
+                }
             };
         }
     } else {
@@ -205,12 +227,19 @@ enum UpdateType {
 }
 
 
-fn update_shared_data(shared: &SharedData, path: &PathBuf, update_type: UpdateType) {
+// Update the record of the number of clients accessing a resource, removing it
+// if there are no more accessors. Return how many accessors came before this one
+// if UpdateType is `Accessing`. Otherwise return 0.
+fn update_shared_data(shared: &SharedData, path: &PathBuf, update_type: UpdateType) -> usize {
     let mut lock = shared.lock().unwrap();
+
+    let mut access_number = 0;
+
     let do_decrement = match lock.get_mut(path) {
         Some((num_accessors, _)) => {
             match update_type {
                 UpdateType::Accessing => {
+                    access_number = *num_accessors;
                     *num_accessors += 1;
                     false
                 },
@@ -235,12 +264,14 @@ fn update_shared_data(shared: &SharedData, path: &PathBuf, update_type: UpdateTy
             }
         }
     }
+
+    return access_number;
 }
 
 
-fn set_cache(shared: &SharedData, path: &PathBuf, new_cache: &String) {
+fn set_cache(shared: &SharedData, path: &PathBuf, new_cache: String) {
     if let Some((_, cache)) = shared.lock().unwrap().get_mut(path) {
-        *cache = Some(new_cache.to_owned());
+        *cache = Some(new_cache);
     }
 }
 
