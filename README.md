@@ -11,7 +11,7 @@ To run, pass in a single command line argument which is the port to which the se
 will bind. The server will attempt to serve pages out of the ``www`` directory
 in a user's home dir. For example, running the server on port 1234 would make
 ``/home/user/www/index.html`` accessible at ``http://localhost:1234/user/index.html``.
-'''You should only run this software as an un-privileged user.'''
+**You should only run this software as an un-privileged user.**
 
 ## Available Features
 
