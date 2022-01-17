@@ -16,19 +16,21 @@ mod html_common;
 mod error_pages;
 mod auto_index;
 
-type SharedData = Arc<Mutex<HashMap<PathBuf, (usize, Option<String>)>>>;
+type SharedData = Arc<Mutex<(HashMap<PathBuf, (usize, Option<String>)>, usize)>>;
 
 // The max number of clients which are allowed to view a single page at once
 const MAX_CONCURRENT_ACCESSORS: usize = 5000;
 // The maximum file size to cache to memory
 const MAX_CACHE_FILE_SIZE: usize = 50 * 1024 * 1024; // 50 MiB
+// The maximum cache size allowed
+const MAX_CACHE_SIZE: usize = 1 * 1024 * 1024 * 1024; // 1 GiB
 
 
 fn main() -> StdResult<(), Error> {
     let port = env::args().nth(1).unwrap().parse()?;
     let server = MicroHTTP::new(("0.0.0.0", port))?;
 
-    let shared = Arc::new(Mutex::new(HashMap::new()));
+    let shared = Arc::new(Mutex::new((HashMap::new(), 0)));
 
     loop {
         let client = server.next_client()?;
@@ -147,7 +149,7 @@ fn handle_get(file_path: &PathBuf, mut query: HashMap<String, String>, mut clien
                                 let bytes_written = client.respond_ok_chunked(&file, size)?;
                                 // If this client is the second to concurrently
                                 // access the file, cache it to reduce I/O
-                                if access_number == 1 && size < MAX_CACHE_FILE_SIZE {
+                                if access_number == 1 && size < MAX_CACHE_FILE_SIZE && get_cache_size(shared) < MAX_CACHE_SIZE {
                                     let mut file_string = String::with_capacity(size);
                                     file.read_to_string(&mut file_string)
                                         .expect("Reading file to string");
@@ -231,7 +233,7 @@ enum UpdateType {
 // if there are no more accessors. Return how many accessors came before this one
 // if UpdateType is `Accessing`. Otherwise return 0.
 fn update_shared_data(shared: &SharedData, path: &PathBuf, update_type: UpdateType) -> usize {
-    let mut lock = shared.lock().unwrap();
+    let lock = &mut shared.lock().unwrap().0;
 
     let mut access_number = 0;
 
@@ -256,11 +258,12 @@ fn update_shared_data(shared: &SharedData, path: &PathBuf, update_type: UpdateTy
     drop(lock);
     if do_decrement {
         std::thread::sleep(Duration::from_secs(1));
-        let mut lock = shared.lock().unwrap();
-        if let Some((num_accessors, _)) = lock.get_mut(path) {
+        let (map, cache_size) = &mut *shared.lock().unwrap();
+        if let Some((num_accessors, cache)) = map.get_mut(path) {
             *num_accessors -= 1;
             if *num_accessors == 0 {
-                lock.remove(path);
+                *cache_size -= cache.as_ref().map_or(0, |c| c.len());
+                map.remove(path);
             }
         }
     }
@@ -270,19 +273,29 @@ fn update_shared_data(shared: &SharedData, path: &PathBuf, update_type: UpdateTy
 
 
 fn set_cache(shared: &SharedData, path: &PathBuf, new_cache: String) {
-    if let Some((_, cache)) = shared.lock().unwrap().get_mut(path) {
-        *cache = Some(new_cache);
+    let (map, cache_size) = &mut *shared.lock().unwrap();
+
+    if let Some((_, cache)) = map.get_mut(path) {
+        let new_cache_size = *cache_size - cache.as_ref().map_or(0, |c| c.len());
+        if new_cache_size + new_cache.len() < MAX_CACHE_SIZE {
+            *cache_size = new_cache_size + new_cache.len();
+            *cache = Some(new_cache);
+        }
     }
+}
+
+fn get_cache_size(shared: &SharedData) -> usize {
+    shared.lock().unwrap().1
 }
 
 
 fn get_cache(shared: &SharedData, path: &PathBuf) -> Option<String> {
-    Some(shared.lock().unwrap().get(path)?.1.as_ref()?.to_owned())
+    Some(shared.lock().unwrap().0.get(path)?.1.as_ref()?.to_owned())
 }
 
 
 fn get_concurrent_accessors(shared: &SharedData, path: &PathBuf) -> usize {
-    if let Some((accessors, _)) = shared.lock().unwrap().get(path) {
+    if let Some((accessors, _)) = shared.lock().unwrap().0.get(path) {
         *accessors
     } else {
         0
