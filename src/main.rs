@@ -139,6 +139,7 @@ fn handle_get(file_path: &PathBuf, mut query: HashMap<String, String>, mut clien
             client.respond_ok_chunked(child_process.stdout.expect("Capturing stdout"), usize::MAX)?;
         } else {
             // serve file
+            let cache_size = get_cache_size(shared);
             match get_cache(shared, &file_path) {
                 Some(cached) => {
                     client.respond_ok(cached.as_bytes())?;
@@ -149,7 +150,7 @@ fn handle_get(file_path: &PathBuf, mut query: HashMap<String, String>, mut clien
                                 let bytes_written = client.respond_ok_chunked(&file, size)?;
                                 // If this client is the second to concurrently
                                 // access the file, cache it to reduce I/O
-                                if access_number == 1 && size < MAX_CACHE_FILE_SIZE && get_cache_size(shared) < MAX_CACHE_SIZE {
+                                if access_number == 1 && size < MAX_CACHE_FILE_SIZE && cache_size < MAX_CACHE_SIZE {
                                     let mut file_string = String::with_capacity(size);
                                     file.read_to_string(&mut file_string)
                                         .expect("Reading file to string");
