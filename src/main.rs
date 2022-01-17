@@ -20,6 +20,8 @@ type SharedData = Arc<Mutex<HashMap<PathBuf, (usize, Option<String>)>>>;
 
 // The max number of clients which are allowed to view a single page at once
 const MAX_CONCURRENT_ACCESSORS: usize = 5000;
+// The maximum file size to cache to memory
+const MAX_CACHE_FILE_SIZE: usize = 50 * 1024 * 1024; // 50 MiB
 
 
 fn main() -> StdResult<(), Error> {
@@ -142,18 +144,16 @@ fn handle_get(file_path: &PathBuf, mut query: HashMap<String, String>, mut clien
                 None => {
                     match open_file(&file_path) {
                             Ok((mut file, size)) => {
-                                if access_number == 1 {
-                                    // If this client is the second to concurrently
-                                    // access the file, cache it to reduce I/O
+                                let bytes_written = client.respond_ok_chunked(&file, size)?;
+                                // If this client is the second to concurrently
+                                // access the file, cache it to reduce I/O
+                                if access_number == 1 && size < MAX_CACHE_FILE_SIZE {
                                     let mut file_string = String::with_capacity(size);
                                     file.read_to_string(&mut file_string)
                                         .expect("Reading file to string");
-                                    set_cache(shared, &file_path, file_string.clone());
-                                    client.respond_ok(file_string.as_bytes())?
-                                } else {
-                                    // Otherwise, just read the file out to the client
-                                    client.respond_ok_chunked(file, size)?
+                                    set_cache(shared, &file_path, file_string);
                                 }
+                                bytes_written
                             },
                             Err(_) => client.respond("500 Internal Server Error", error_pages::ERROR_500.as_bytes(), &vec![])?
                     };
