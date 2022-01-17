@@ -10,13 +10,14 @@ use std::sync::{Arc, Mutex};
 use std::process::{Command, Stdio};
 use std::collections::HashMap;
 use std::time::Duration;
+use bytes::{Bytes, BytesMut};
 
 #[macro_use]
 mod html_common;
 mod error_pages;
 mod auto_index;
 
-type SharedData = Arc<Mutex<(HashMap<PathBuf, (usize, Option<String>)>, usize)>>;
+type SharedData = Arc<Mutex<(HashMap<PathBuf, (usize, Option<Bytes>)>, usize)>>;
 
 // The max number of clients which are allowed to view a single page at once
 const MAX_CONCURRENT_ACCESSORS: usize = 5000;
@@ -91,6 +92,21 @@ where P: AsRef<Path>
 }
 
 
+// Wrapper around File that cached reads to a buffer
+struct CachedReadFile {
+    file: File,
+    cache: BytesMut
+}
+
+impl Read for CachedReadFile {
+    fn read(&mut self, buf: &mut[u8]) -> Result<usize> {
+        let bytes_read = self.file.read(buf)?;
+        self.cache.extend_from_slice(&buf[..bytes_read]);
+        Ok(bytes_read)
+    }
+}
+
+
 // Helper function to respond to GET requests
 fn handle_get(file_path: &PathBuf, mut query: HashMap<String, String>, mut client: Client, shared: &SharedData, access_number: usize) -> Result<()> {
     let mut file_path = file_path.to_owned();
@@ -106,8 +122,8 @@ fn handle_get(file_path: &PathBuf, mut query: HashMap<String, String>, mut clien
     if file_path.exists() {
         if file_path.is_dir() {
             // serve autoindex
-            let index = if let Some(index) = get_cache(&shared, &file_path) {
-                index
+            if let Some(index) = get_cache(&shared, &file_path) {
+                client.respond_ok(&index)?;
             } else {
                 let index = if &file_path == &Path::new("/home") {
                     auto_index::generate_index(&file_path, Some("People"), |entry| {
@@ -121,10 +137,9 @@ fn handle_get(file_path: &PathBuf, mut query: HashMap<String, String>, mut clien
                 } else {
                     auto_index::generate_index(&file_path, None, |entry| { entry.ok() })?
                 };
-                set_cache(shared, &file_path, index.clone());
-                index
+                client.respond_ok(&index.as_bytes())?;
+                set_cache(shared, &file_path, index.clone().into());
             };
-            client.respond_ok(index.as_bytes())?;
         } else if file_path.ends_with("index_executable") {
             filter_env_variables(&mut query);
             // run program
@@ -139,24 +154,28 @@ fn handle_get(file_path: &PathBuf, mut query: HashMap<String, String>, mut clien
             client.respond_ok_chunked(child_process.stdout.expect("Capturing stdout"), usize::MAX)?;
         } else {
             // serve file
-            let cache_size = get_cache_size(shared);
             match get_cache(shared, &file_path) {
                 Some(cached) => {
-                    client.respond_ok(cached.as_bytes())?;
+                    client.respond_ok(&cached)?;
                 },
                 None => {
                     match open_file(&file_path) {
-                            Ok((mut file, size)) => {
-                                let bytes_written = client.respond_ok_chunked(&file, size)?;
-                                // If this client is the second to concurrently
-                                // access the file, cache it to reduce I/O
-                                if access_number == 1 && size < MAX_CACHE_FILE_SIZE && cache_size < MAX_CACHE_SIZE {
-                                    let mut file_string = String::with_capacity(size);
-                                    file.read_to_string(&mut file_string)
-                                        .expect("Reading file to string");
-                                    set_cache(shared, &file_path, file_string);
+                            Ok((file, size)) => {
+                                if access_number == 1 && size < MAX_CACHE_FILE_SIZE
+                                && get_cache_size(shared) < MAX_CACHE_SIZE
+                                {
+                                    // If this client is the second to concurrently
+                                    // access the file, cache it to reduce I/O
+                                    let mut cached_read_file = CachedReadFile {
+                                        file: file,
+                                        cache: BytesMut::with_capacity(size)
+                                    };
+                                    let bytes_read = client.respond_ok_chunked(&mut cached_read_file, size)?;
+                                    set_cache(shared, &file_path, cached_read_file.cache.into());
+                                    bytes_read
+                                } else {
+                                    client.respond_ok_chunked(file, size)?
                                 }
-                                bytes_written
                             },
                             Err(_) => client.respond("500 Internal Server Error", error_pages::ERROR_500.as_bytes(), &vec![])?
                     };
@@ -273,7 +292,7 @@ fn update_shared_data(shared: &SharedData, path: &PathBuf, update_type: UpdateTy
 }
 
 
-fn set_cache(shared: &SharedData, path: &PathBuf, new_cache: String) {
+fn set_cache(shared: &SharedData, path: &PathBuf, new_cache: Bytes) {
     let (map, cache_size) = &mut *shared.lock().unwrap();
 
     if let Some((_, cache)) = map.get_mut(path) {
@@ -290,7 +309,7 @@ fn get_cache_size(shared: &SharedData) -> usize {
 }
 
 
-fn get_cache(shared: &SharedData, path: &PathBuf) -> Option<String> {
+fn get_cache(shared: &SharedData, path: &PathBuf) -> Option<Bytes> {
     Some(shared.lock().unwrap().0.get(path)?.1.as_ref()?.to_owned())
 }
 
