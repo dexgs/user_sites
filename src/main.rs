@@ -48,10 +48,9 @@ fn handle_client(mut client: Client, shared: SharedData) -> Option<()> {
     // Prevent accessing directories that are not descendants of /home by disabling
     // using parent directories (../) in paths.
     let mut components = path.components().filter(|c| {
-        if let Component::ParentDir = c {
-            false
-        } else {
-            true
+        match c {
+            Component::ParentDir => false,
+            _ => true
         }
     });
     // Assuming first component is / and second is user name
@@ -253,29 +252,31 @@ enum UpdateType {
 // if there are no more accessors. Return how many accessors came before this one
 // if UpdateType is `Accessing`. Otherwise return 0.
 fn update_shared_data(shared: &SharedData, path: &PathBuf, update_type: UpdateType) -> usize {
-    let lock = &mut shared.lock().unwrap().0;
+    let mut access_number: usize = 0;
 
-    let mut access_number = 0;
+    let do_decrement = {
+        let lock = &mut shared.lock().unwrap().0;
 
-    let do_decrement = match lock.get_mut(path) {
-        Some((num_accessors, _)) => {
-            match update_type {
-                UpdateType::Accessing => {
-                    access_number = *num_accessors;
-                    *num_accessors += 1;
-                    false
-                },
-                UpdateType::Closing => true
+        match lock.get_mut(path) {
+            Some((num_accessors, _)) => {
+                match update_type {
+                    UpdateType::Accessing => {
+                        access_number = *num_accessors;
+                        *num_accessors += 1;
+                        false
+                    },
+                    UpdateType::Closing => true
+                }
+            },
+            None => {
+                if let UpdateType::Accessing = update_type {
+                    lock.insert(path.to_owned(), (1, None));
+                }
+                false
             }
-        },
-        None => {
-            if let UpdateType::Accessing = update_type {
-                lock.insert(path.to_owned(), (1, None));
-            }
-            false
         }
     };
-    drop(lock);
+
     if do_decrement {
         std::thread::sleep(Duration::from_secs(1));
         let (map, cache_size) = &mut *shared.lock().unwrap();
@@ -315,10 +316,9 @@ fn get_cache(shared: &SharedData, path: &PathBuf) -> Option<Bytes> {
 
 
 fn get_concurrent_accessors(shared: &SharedData, path: &PathBuf) -> usize {
-    if let Some((accessors, _)) = shared.lock().unwrap().0.get(path) {
-        *accessors
-    } else {
-        0
+    match shared.lock().unwrap().0.get(path) {
+        Some((accessors, _)) => *accessors,
+        None => 0
     }
 }
 
