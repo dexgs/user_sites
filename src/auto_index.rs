@@ -51,7 +51,7 @@ where F: Fn(Result<DirEntry>) -> Option<DirEntry> {
     let mut header = if let Some(header) = header {
         format!("   <h1>{}</h1>", header)
     } else if let Some(header) = read_file(path.join("header.html")) {
-        header.trim().to_owned()
+        header.trim_end().to_owned()
     } else {
         format!("    <h1>{}</h1>", display_path)
     };
@@ -71,7 +71,7 @@ where F: Fn(Result<DirEntry>) -> Option<DirEntry> {
 
     // Try loading a footer if one is available
     if let Some(footer) = read_file(path.join("footer.html")) { 
-        body.push_str(footer.trim())
+        body.push_str(footer.trim_end())
     }
 
     Ok(format_html!(head, body))
