@@ -4,15 +4,13 @@ use std::io::{Result, Read};
 use std::cmp::Ordering;
 use chrono::{DateTime, Local};
 
-// Add a CSS rule to hide the special files read by generate_index and attempt
-// to load a stylesheet
+// Add a CSS rule to hide the special files read by generate_index
 const CSS: &'static str = "
         <style>
             a[href=\"footer.html\"], a[href=\"header.html\"], a[href=\"styles.css\"], a[href=\"title\"] {
                 display: none !important;
             }
-        </style>
-        <link rel=\"stylesheet\" href=\"styles.css\"/>";
+        </style>";
 
 pub fn generate_index<F: 'static>(path: impl AsRef<Path>, header: Option<&str>, f: F) -> Result<String>
 where F: Fn(Result<DirEntry>) -> Option<DirEntry> {
@@ -39,13 +37,15 @@ where F: Fn(Result<DirEntry>) -> Option<DirEntry> {
     // Skip the "/home/user/www" and just display the rest of the path
     let display_path = format!("{}", path.components().skip(4).fold(PathBuf::new(), |mut p, e| { p.push(e); p }).to_str().unwrap_or(""));
 
-    let title = if let Some(title) = header {
-        title.to_owned()
-    } else if let Some(title) = read_file(path.join("title")) {
-        title.trim().to_owned()
+    let title = if let Some(head) = header {
+        head.to_owned()
+    } else if let Some(head) = read_file(path.join("title")) {
+        head.trim().to_owned()
     } else {
-        display_path.clone()
+        display_path.to_owned()
     };
+
+    let head = format!("<title>{}</title>\n        <link rel=\"stylesheet\" href=\"styles.css\"/>", title);
 
     // Set the page heading
     let mut header = if let Some(header) = header {
@@ -74,7 +74,7 @@ where F: Fn(Result<DirEntry>) -> Option<DirEntry> {
         body.push_str(footer.trim())
     }
 
-    Ok(format_html!(title, body))
+    Ok(format_html!(head, body))
 }
 
 fn format_entry(entry: &DirEntry) -> String {
