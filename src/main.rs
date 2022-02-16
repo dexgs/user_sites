@@ -151,7 +151,7 @@ fn handle_get(file_path: &PathBuf, mut query: HashMap<String, String>, mut clien
             // the content length header, just set it to the max possible value.
             // modern browsers will be able to handle this even if it's not standard.
             client.respond_ok_chunked(child_process.stdout.expect("Capturing stdout"), usize::MAX)?;
-        } else {
+        } else if !file_path.ends_with("form_executable") {
             // serve file
             match get_cache(shared, &file_path) {
                 Some(cached) => {
