@@ -10,3 +10,4 @@ micro_http_server = { git = "https://github.com/dexgs/micro-http-server", branch
 bytes = "1.1.0"
 anyhow = "1.0"
 chrono = "0.4.19"
+urlencoding = "2.1"

@@ -11,6 +11,7 @@ use std::process::{Command, Stdio};
 use std::collections::HashMap;
 use std::time::Duration;
 use bytes::{Bytes, BytesMut};
+use urlencoding;
 
 #[macro_use]
 mod html_common;
@@ -74,7 +75,9 @@ fn handle_client(mut client: Client, shared: SharedData) -> Option<()> {
     if let Err(e) = match request {
         Request::GET(query, _) => handle_get(&file_path, query, client, &shared, access_number),
         Request::POST(_, mut data) => handle_post(&file_path, &mut data, client)
-    } { eprintln!("{}", e); }
+    } {
+        eprintln!("{}", e);
+    }
     update_shared_data(&shared, &file_path, UpdateType::Closing);
 
     Some(())
@@ -107,7 +110,10 @@ impl Read for CachedReadFile {
 
 
 // Helper function to respond to GET requests
-fn handle_get(file_path: &PathBuf, mut query: HashMap<String, String>, mut client: Client, shared: &SharedData, access_number: usize) -> Result<()> {
+fn handle_get(
+    file_path: &PathBuf, mut query: HashMap<String, String>, mut client: Client,
+    shared: &SharedData, access_number: usize) -> Result<()> 
+{
     let mut file_path = file_path.to_owned();
 
     if file_path.is_dir() {
@@ -118,7 +124,7 @@ fn handle_get(file_path: &PathBuf, mut query: HashMap<String, String>, mut clien
         if !file_path.exists() { file_path.pop(); }
     }
 
-    if file_path.exists() {
+    if file_path.exists() && !file_path.ends_with("form_executable") {
         if file_path.is_dir() {
             // serve autoindex
             if let Some(index) = get_cache(&shared, &file_path) {
@@ -151,7 +157,7 @@ fn handle_get(file_path: &PathBuf, mut query: HashMap<String, String>, mut clien
             // the content length header, just set it to the max possible value.
             // modern browsers will be able to handle this even if it's not standard.
             client.respond_ok_chunked(child_process.stdout.expect("Capturing stdout"), usize::MAX)?;
-        } else if !file_path.ends_with("form_executable") {
+        } else {
             // serve file
             match get_cache(shared, &file_path) {
                 Some(cached) => {
@@ -227,14 +233,12 @@ fn handle_post(file_path: &PathBuf, data: &mut Option<FormData>, mut client: Cli
     let mut child_process = command.spawn()?;
     if let Some(mut stdin) = child_process.stdin.take() {
         if let Some(FormData::Stream(mut reader)) = data.take() {
-            thread::spawn(move || {
-                let mut buffer = [0; 4096];
-                while let Ok(bytes_read) = reader.read(&mut buffer) {
-                    if bytes_read == 0 { break; }
-                    stdin.write_all(&buffer)
-                        .expect("Writing to stdin");
-                }
-            });
+            let mut buffer = [0; 4096];
+            while let Ok(bytes_read) = reader.read(&mut buffer) {
+                if bytes_read == 0 { break; }
+                stdin.write_all(&buffer)
+                    .expect("Writing to stdin");
+            }
         }
     }
     client.respond_ok_chunked(child_process.stdout.expect("Capturing stdout"), usize::MAX)?;
@@ -327,8 +331,11 @@ fn get_concurrent_accessors(shared: &SharedData, path: &PathBuf) -> usize {
 fn filter_env_variables(vars: &mut HashMap<String, String>) {
     for var in vars.keys().map(|k| k.to_owned()).collect::<Vec<String>>() {
         // Remove var if it is already defined or all caps
-        if env::var(&var).is_ok() || var == var.to_uppercase() {
-            vars.remove(&var);
+        if let Ok(var) = urlencoding::decode(&var) {
+            let var = var.to_string();
+            if env::var(&var).is_ok() || var == var.to_uppercase() {
+                vars.remove(&var);
+            }
         }
     }
 }
