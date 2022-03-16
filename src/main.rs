@@ -3,14 +3,12 @@ use micro_http_server::{MicroHTTP, Client, Request, FormData};
 use anyhow::Error;
 use std::thread;
 use std::path::{Path, PathBuf, Component};
-use std::fs::{OpenOptions, File};
+use std::fs::{OpenOptions, File, metadata};
 use std::io::{Result, Read, Write};
 use std::result::Result as StdResult;
-use std::sync::{Arc, Mutex};
 use std::process::{Command, Stdio};
 use std::collections::HashMap;
-use std::time::Duration;
-use bytes::{Bytes, BytesMut};
+use httpdate::fmt_http_date;
 use urlencoding;
 
 #[macro_use]
@@ -18,33 +16,21 @@ mod html_common;
 mod error_pages;
 mod auto_index;
 
-type SharedData = Arc<Mutex<(HashMap<PathBuf, (usize, Option<Bytes>)>, usize)>>;
-
-// The max number of clients which are allowed to view a single page at once
-const MAX_CONCURRENT_ACCESSORS: usize = 5000;
-// The maximum file size to cache to memory
-const MAX_CACHE_FILE_SIZE: usize = 50 * 1024 * 1024; // 50 MiB
-// The maximum cache size allowed
-const MAX_CACHE_SIZE: usize = 1 * 1024 * 1024 * 1024; // 1 GiB
-
 
 fn main() -> StdResult<(), Error> {
     let port = env::args().nth(1).unwrap().parse()?;
     let server = MicroHTTP::new(("0.0.0.0", port))?;
 
-    let shared = Arc::new(Mutex::new((HashMap::new(), 0)));
-
     loop {
         let client = server.next_client()?;
         if let Some(client) = client {
-            let shared = shared.clone();
-            thread::spawn(move || handle_client(client, shared));
+            thread::spawn(move || handle_client(client));
         }
     }
 }
 
 
-fn handle_client(mut client: Client, shared: SharedData) -> Option<()> {
+fn handle_client(mut client: Client) -> Option<()> {
     let (path, request) = client.request_mut().take()?;
     // Prevent accessing directories that are not descendants of /home by disabling
     // using parent directories (../) in paths.
@@ -64,21 +50,14 @@ fn handle_client(mut client: Client, shared: SharedData) -> Option<()> {
         None => PathBuf::from("/home")
     };
 
-    if get_concurrent_accessors(&shared, &path) > MAX_CONCURRENT_ACCESSORS {
-        // Tell the client the server is too busy to serve the request
-        client.respond("503 Service Unavailable", error_pages::ERROR_503.as_bytes(), &vec![])
-            .expect("Reporting error to client");
-        return None;
-    }
-
-    let access_number = update_shared_data(&shared, &file_path, UpdateType::Accessing);
-    if let Err(e) = match request {
-        Request::GET(query, _) => handle_get(&file_path, query, client, &shared, access_number),
+    let response_status = match request {
+        Request::GET(query, _) => handle_get(&file_path, query, client),
         Request::POST(_, mut data) => handle_post(&file_path, &mut data, client)
-    } {
+    };
+
+    if let Err(e) = response_status {
         eprintln!("{}", e);
     }
-    update_shared_data(&shared, &file_path, UpdateType::Closing);
 
     Some(())
 }
@@ -94,25 +73,9 @@ where P: AsRef<Path>
 }
 
 
-// Wrapper around File that cached reads to a buffer
-struct CachedReadFile {
-    file: File,
-    cache: BytesMut
-}
-
-impl Read for CachedReadFile {
-    fn read(&mut self, buf: &mut[u8]) -> Result<usize> {
-        let bytes_read = self.file.read(buf)?;
-        self.cache.extend_from_slice(&buf[..bytes_read]);
-        Ok(bytes_read)
-    }
-}
-
-
 // Helper function to respond to GET requests
 fn handle_get(
-    file_path: &PathBuf, mut query: HashMap<String, String>, mut client: Client,
-    shared: &SharedData, access_number: usize) -> Result<()> 
+    file_path: &PathBuf, mut query: HashMap<String, String>, mut client: Client) -> Result<()> 
 {
     let mut file_path = file_path.to_owned();
 
@@ -127,24 +90,22 @@ fn handle_get(
     if file_path.exists() && !file_path.ends_with("form_executable") {
         if file_path.is_dir() {
             // serve autoindex
-            if let Some(index) = get_cache(&shared, &file_path) {
-                client.respond_ok(&index)?;
+            let index = if &file_path == &Path::new("/home") {
+                auto_index::generate_index(&file_path, Some("People"), |entry| {
+                    let entry = entry.ok()?;
+                    if entry.file_type().ok()?.is_dir() && entry.path().join("www").exists() {
+                        return Some(entry);
+                    } else {
+                        None
+                    }
+                })?
             } else {
-                let index = if &file_path == &Path::new("/home") {
-                    auto_index::generate_index(&file_path, Some("People"), |entry| {
-                        let entry = entry.ok()?;
-                        if entry.file_type().ok()?.is_dir() && entry.path().join("www").exists() {
-                            return Some(entry);
-                        } else {
-                            None
-                        }
-                    })?
-                } else {
-                    auto_index::generate_index(&file_path, None, |entry| { entry.ok() })?
-                };
-                client.respond_ok(&index.as_bytes())?;
-                set_cache(shared, &file_path, index.clone().into());
+                auto_index::generate_index(&file_path, None, |entry| { entry.ok() })?
             };
+            client.respond(
+                "200 OK",
+                &index.as_bytes(),
+                &vec!["Cache-Control: max-age=5".to_owned()])?;
         } else if file_path.ends_with("index_executable") {
             filter_env_variables(&mut query);
             // run program
@@ -156,35 +117,22 @@ fn handle_get(
             // This is a really nasty hack, but to get around the requirement of
             // the content length header, just set it to the max possible value.
             // modern browsers will be able to handle this even if it's not standard.
-            client.respond_ok_chunked(child_process.stdout.expect("Capturing stdout"), usize::MAX)?;
+            client.respond_chunked(
+                "200 OK",
+                child_process.stdout.expect("Capturing stdout"),
+                usize::MAX,
+                &vec!["Cache-Control: no-cache".to_owned()])?;
         } else {
             // serve file
-            match get_cache(shared, &file_path) {
-                Some(cached) => {
-                    client.respond_ok(&cached)?;
+            let modified = metadata(&file_path).and_then(|m| m.modified())?;
+            let headers = vec![
+                format!("Last-Modified: {}", fmt_http_date(modified))
+            ];
+            match open_file(&file_path) {
+                Ok((file, size)) => {
+                    client.respond_chunked("200 OK", file, size, &headers)?
                 },
-                None => {
-                    match open_file(&file_path) {
-                            Ok((file, size)) => {
-                                if access_number == 1 && size < MAX_CACHE_FILE_SIZE
-                                && get_cache_size(shared) < MAX_CACHE_SIZE
-                                {
-                                    // If this client is the second to concurrently
-                                    // access the file, cache it to reduce I/O
-                                    let mut cached_read_file = CachedReadFile {
-                                        file: file,
-                                        cache: BytesMut::with_capacity(size)
-                                    };
-                                    let bytes_read = client.respond_ok_chunked(&mut cached_read_file, size)?;
-                                    set_cache(shared, &file_path, cached_read_file.cache.into());
-                                    bytes_read
-                                } else {
-                                    client.respond_ok_chunked(file, size)?
-                                }
-                            },
-                            Err(_) => client.respond("500 Internal Server Error", error_pages::ERROR_500.as_bytes(), &vec![])?
-                    };
-                }
+                Err(_) => client.respond("500 Internal Server Error", error_pages::ERROR_500.as_bytes(), &vec![])?
             };
         }
     } else {
@@ -243,87 +191,6 @@ fn handle_post(file_path: &PathBuf, data: &mut Option<FormData>, mut client: Cli
     }
     client.respond_ok_chunked(child_process.stdout.expect("Capturing stdout"), usize::MAX)?;
     Ok(())
-}
-
-
-enum UpdateType {
-    Accessing,
-    Closing
-}
-
-
-// Update the record of the number of clients accessing a resource, removing it
-// if there are no more accessors. Return how many accessors came before this one
-// if UpdateType is `Accessing`. Otherwise return 0.
-fn update_shared_data(shared: &SharedData, path: &PathBuf, update_type: UpdateType) -> usize {
-    let mut access_number: usize = 0;
-
-    let do_decrement = {
-        let lock = &mut shared.lock().unwrap().0;
-
-        match lock.get_mut(path) {
-            Some((num_accessors, _)) => {
-                match update_type {
-                    UpdateType::Accessing => {
-                        access_number = *num_accessors;
-                        *num_accessors += 1;
-                        false
-                    },
-                    UpdateType::Closing => true
-                }
-            },
-            None => {
-                if let UpdateType::Accessing = update_type {
-                    lock.insert(path.to_owned(), (1, None));
-                }
-                false
-            }
-        }
-    };
-
-    if do_decrement {
-        std::thread::sleep(Duration::from_secs(1));
-        let (map, cache_size) = &mut *shared.lock().unwrap();
-        if let Some((num_accessors, cache)) = map.get_mut(path) {
-            *num_accessors -= 1;
-            if *num_accessors == 0 {
-                *cache_size -= cache.as_ref().map_or(0, |c| c.len());
-                map.remove(path);
-            }
-        }
-    }
-
-    return access_number;
-}
-
-
-fn set_cache(shared: &SharedData, path: &PathBuf, new_cache: Bytes) {
-    let (map, cache_size) = &mut *shared.lock().unwrap();
-
-    if let Some((_, cache)) = map.get_mut(path) {
-        let new_cache_size = *cache_size - cache.as_ref().map_or(0, |c| c.len());
-        if new_cache_size + new_cache.len() < MAX_CACHE_SIZE {
-            *cache_size = new_cache_size + new_cache.len();
-            *cache = Some(new_cache);
-        }
-    }
-}
-
-fn get_cache_size(shared: &SharedData) -> usize {
-    shared.lock().unwrap().1
-}
-
-
-fn get_cache(shared: &SharedData, path: &PathBuf) -> Option<Bytes> {
-    Some(shared.lock().unwrap().0.get(path)?.1.as_ref()?.to_owned())
-}
-
-
-fn get_concurrent_accessors(shared: &SharedData, path: &PathBuf) -> usize {
-    match shared.lock().unwrap().0.get(path) {
-        Some((accessors, _)) => *accessors,
-        None => 0
-    }
 }
 
 
