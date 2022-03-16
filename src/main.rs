@@ -8,7 +8,7 @@ use std::io::{Result, Read, Write};
 use std::result::Result as StdResult;
 use std::process::{Command, Stdio};
 use std::collections::HashMap;
-use httpdate::{fmt_http_date, parse_http_date};
+use httpdate::fmt_http_date;
 use urlencoding;
 
 #[macro_use]
@@ -51,7 +51,7 @@ fn handle_client(mut client: Client) -> Option<()> {
     };
 
     let response_status = match request {
-        Request::GET(query, headers) => handle_get(&file_path, query, headers, client),
+        Request::GET(query, _) => handle_get(&file_path, query, client),
         Request::POST(_, mut data) => handle_post(&file_path, &mut data, client)
     };
 
@@ -75,8 +75,7 @@ where P: AsRef<Path>
 
 // Helper function to respond to GET requests
 fn handle_get(
-    file_path: &PathBuf, mut query: HashMap<String, String>,
-    headers: HashMap<String, String>, mut client: Client) -> Result<()>
+    file_path: &PathBuf, mut query: HashMap<String, String>, mut client: Client) -> Result<()>
 {
     let mut file_path = file_path.to_owned();
 
@@ -126,15 +125,6 @@ fn handle_get(
         } else {
             // serve file
             let modified = metadata(&file_path).and_then(|m| m.modified())?;
-            if let Some(modified_since) = headers.get("if-modified-since")
-                .and_then(|m| parse_http_date(m).ok())
-            {
-                if modified < modified_since {
-                    client.respond("304 Not Modified", b"", &vec![])?;
-                    return Ok(());
-                }
-            }
-
             let headers = vec![
                 format!("Last-Modified: {}", fmt_http_date(modified))
             ];
