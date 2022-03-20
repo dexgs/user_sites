@@ -64,7 +64,7 @@ fn handle_client(mut client: Client) -> Option<()> {
 
 
 // Return file handle and reported file size in bytes
-fn open_file<P>(file_path: P) -> Result<(File, usize)> 
+fn open_file<P>(file_path: P) -> Result<(File, usize)>
 where P: AsRef<Path>
 {
     let file_handle = OpenOptions::new().read(true).write(false).open(file_path.as_ref())?;
@@ -83,9 +83,16 @@ fn handle_get(
     if file_path.is_dir() {
         // Only modify the path if the new destination exists
         file_path.push("index_executable");
-        if !file_path.exists() { file_path.pop(); }
-        file_path.push("index.html");
-        if !file_path.exists() { file_path.pop(); }
+
+        if !file_path.exists() || !file_path.is_file() {
+            file_path.pop();
+
+            file_path.push("index.html");
+
+            if !file_path.exists() || !file_path.is_file() {
+                file_path.pop();
+            }
+        }
     }
 
     if file_path.exists() && !file_path.ends_with("form_executable") {
@@ -106,7 +113,7 @@ fn handle_get(
             client.respond(
                 "200 OK",
                 &index.as_bytes(),
-                &vec!["Cache-Control: max-age=5".to_owned()])?;
+                &vec!["Cache-Control: max-age=30".to_owned()])?;
         } else if file_path.ends_with("index_executable") {
             filter_env_variables(&mut query);
             // run program
@@ -134,7 +141,8 @@ fn handle_get(
                 }
             }
             let headers = vec![
-                format!("Last-Modified: {}", modified_string)
+                format!("Last-Modified: {}", modified_string),
+                "Cache-Control: max-age=30".to_owned()
             ];
             match open_file(&file_path) {
                 Ok((file, size)) => {
