@@ -4,10 +4,10 @@ use anyhow::Error;
 use std::thread;
 use std::path::{Path, PathBuf, Component};
 use std::fs::{OpenOptions, File, metadata};
-use std::io::{Result, Read, Write};
+use std::io::{self, ErrorKind, Result, Read, Write, BufRead, BufReader};
 use std::result::Result as StdResult;
 use std::process::{Command, Stdio};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use httpdate::fmt_http_date;
 use urlencoding;
 
@@ -64,12 +64,16 @@ fn handle_client(mut client: Client) -> Option<()> {
 
 
 // Return file handle and reported file size in bytes
-fn open_file<P>(file_path: P) -> Result<(File, usize)>
+fn open_file<P>(file_path: P) -> Result<(BufReader<File>, usize)>
 where P: AsRef<Path>
 {
-    let file_handle = OpenOptions::new().read(true).write(false).open(file_path.as_ref())?;
+    let file_handle = OpenOptions::new()
+        .read(true)
+        .write(false)
+        .open(file_path.as_ref())?;
     let file_size = file_handle.metadata()?.len() as usize;
-    Ok((file_handle, file_size))
+
+    Ok((BufReader::new(file_handle), file_size))
 }
 
 
@@ -95,7 +99,10 @@ fn handle_get(
         }
     }
 
-    if file_path.exists() && !file_path.ends_with("form_executable") {
+    if file_path.exists()
+        && !file_path.ends_with("form_executable")
+        && !file_path.ends_with("allowed_variables")
+    {
         if file_path.is_dir() {
             // serve autoindex
             let index = if &file_path == &Path::new("/home") {
@@ -115,7 +122,9 @@ fn handle_get(
                 &index.as_bytes(),
                 &vec!["Cache-Control: max-age=30".to_owned()])?;
         } else if file_path.ends_with("index_executable") {
-            filter_env_variables(&mut query);
+            let allowed_variables_file = get_adjacent_allowed_variables_file(&file_path)?;
+            let allowed_variables = get_allowed_variables(allowed_variables_file)?;
+            filter_env_variables(&mut query, &allowed_variables);
             // run program
             let child_process = Command::new(file_path.as_os_str())
                 .envs(query)
@@ -140,10 +149,12 @@ fn handle_get(
                     return Ok(());
                 }
             }
+
             let headers = vec![
                 format!("Last-Modified: {}", modified_string),
                 "Cache-Control: max-age=30".to_owned()
             ];
+
             match open_file(&file_path) {
                 Ok((file, size)) => {
                     client.respond_chunked("200 OK", file, size, &headers)?
@@ -173,7 +184,7 @@ fn handle_post(file_path: &PathBuf, data: &mut Option<FormData>, mut client: Cli
     }
     let executable_path = file_path.as_os_str();
     let mut command = Command::new(executable_path);
-    command.arg(file_path)
+    command.arg(&file_path)
         .stdout(Stdio::piped())
         .stdin(Stdio::null());
     // Different data will be fed to the executable depending on how the form
@@ -181,7 +192,9 @@ fn handle_post(file_path: &PathBuf, data: &mut Option<FormData>, mut client: Cli
     match data.as_mut() {
         // URL encoded form
         Some(FormData::KeyVal(vars)) => {
-            filter_env_variables(vars);
+            let allowed_variables_file = get_adjacent_allowed_variables_file(&file_path)?;
+            let allowed_variables = get_allowed_variables(allowed_variables_file)?;
+            filter_env_variables(vars, &allowed_variables);
             command.envs(vars);
         },
         // Plaintext form
@@ -211,14 +224,42 @@ fn handle_post(file_path: &PathBuf, data: &mut Option<FormData>, mut client: Cli
 
 
 // Filter out variable definitions that are already present
-fn filter_env_variables(vars: &mut HashMap<String, String>) {
+fn filter_env_variables(vars: &mut HashMap<String, String>, allowed_variables: &HashSet<String>) {
     for var in vars.keys().map(|k| k.to_owned()).collect::<Vec<String>>() {
         // Remove var if it is already defined or all caps
         if let Ok(var) = urlencoding::decode(&var) {
             let var = var.to_string();
-            if env::var(&var).is_ok() || var == var.to_uppercase() {
+            if env::var(&var).is_ok()
+                || var == var.to_uppercase()
+                || !allowed_variables.contains(&var)
+            {
                 vars.remove(&var);
             }
         }
     }
+}
+
+// Get a reader for a file named "allowed_varibles" adjacent to the file located
+// at the given path.
+fn get_adjacent_allowed_variables_file<P>(path: P) -> Result<BufReader<File>>
+where P: AsRef<Path>
+{
+    let allowed_variables_path = path
+        .as_ref()
+        .parent()
+        .ok_or(io::Error::from(ErrorKind::Other))?
+        .join("allowed_variables");
+    Ok(open_file(allowed_variables_path)?.0)
+}
+
+// Read the allowed variable keys from a reader
+fn get_allowed_variables<R>(reader: R) -> Result<HashSet<String>>
+where R: BufRead {
+    let mut allowed_variables = HashSet::new();
+
+    for line in reader.lines() {
+        allowed_variables.insert(line?.trim().to_owned());
+    }
+
+    Ok(allowed_variables)
 }

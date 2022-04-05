@@ -27,7 +27,10 @@ Placing an executable called ``index_executable`` into a directory will cause th
 server to run that executable and relay its output over the web when that directory
 is accessed. The command will be passed the path that was accessed as an argument.
 The contents of the query string will be available to the program as environment
-variables.
+variables. There must be a file adjacent to ``index_executable`` called
+``allowed_variables`` where each line contains the name of a variable. Any
+keys in the query string which are not also present in ``allowed_variables``
+will be discarded.
 
 ### Handle POST Requests
 This is similar to the server-side rendering feature. Put an executable called
@@ -36,7 +39,8 @@ passed the path to which the POST was made as an argument and will have access
 to the form data. If the form was URL encoded, its values will be available as
 environment variables. If the form was plaintext, it will be passed in as the
 second argument. If the form was multipart, it will be sent to the program's
-stdin.
+stdin. There must be a file adjacent to ``form_executable`` called
+``allowed_variables`` as described in the previous paragraph.
 
 ### Auto-Indexed Directories
 If a directory is accessed and it contains neither an ``index.html`` file nor an
@@ -63,10 +67,3 @@ location ~ ^/~.*$ {
     proxy_pass http://127.0.0.1:1234;
 }
 ```
-
-## Planned Features
-
-### Allow WebSocket Connections
-I would also like for it to be possible to supply a program which will handle
-WebSocket connections. This would probably work by piping the stdin, stout, and
-stderr of the program.
