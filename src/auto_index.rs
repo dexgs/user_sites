@@ -3,6 +3,7 @@ use std::fs::{DirEntry, File};
 use std::io::{Result, Read};
 use std::cmp::Ordering;
 use chrono::{DateTime, Local};
+use urlencoding::encode;
 
 // Add a CSS rule to hide the special files read by generate_index
 const CSS: &'static str = "
@@ -86,8 +87,8 @@ fn format_entry(entry: &DirEntry) -> String {
         name.push_str("/");
     }
     format!("
-            <a href=\"{name}\" data-modified=\"{last_modified}\" data-size=\"{size}\">{name}<br/></a>",
-            name=name, last_modified=last_modified, size=size)
+            <a href=\"{href}\" data-modified=\"{last_modified}\" data-size=\"{size}\">{name}<br/></a>",
+            href=encode(&name), last_modified=last_modified, size=size)
 }
 
 fn read_file(file_path: PathBuf) -> Option<String> {
