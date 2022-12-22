@@ -78,10 +78,14 @@ fn read_request_url(reader: &mut BufReader<TcpStream>) -> io::Result<(URL, Query
 fn parse_url_encoded_key_value_pairs(s: &str) -> HashMap<String, String> {
 	s.trim().split('&').filter_map(
 		|pair| {
-			let (k, v) = pair.split_once('=')?;
-			let k = decode(k).ok()?.to_string();
-			let v = decode(v).ok()?.to_string();
-			Some((k, v))
+			match pair.split_once('=') {
+				Some((k, v)) => {
+					let k = decode(k).ok()?.to_string();
+					let v = decode(v).ok()?.to_string();
+					Some((k, v))
+				},
+				None => Some((pair.to_string(), String::new()))
+			}
 		})
 	.collect()
 }
