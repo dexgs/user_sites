@@ -142,14 +142,10 @@ fn format_entry(entry: &DirEntry) -> String {
     let last_modified = DateTime::<Local>::from(metadata.modified().unwrap()).format("%d/%m/%Y %T");
     let size = metadata.len();
 
-    let mut name = encode(entry.file_name().to_str().unwrap_or("")).to_string();
-    if metadata.is_dir() {
-        name.push_str("/");
-    }
+    let name = entry.file_name().to_str().unwrap_or("").to_string();
+    let href = encode(&name);
 
-    format!("
-            <li><a href=\"{href}\" data-modified=\"{last_modified}\" data-size=\"{size}\">{name}<br/></a></li>",
-            href=name, last_modified=last_modified, size=size)
+    format!("<li><a href=\"{href}\" data-modified=\"{last_modified}\" data-size=\"{size}\">{name}<br/></a></li>")
 }
 
 fn read_file(file_path: PathBuf) -> Option<String> {
