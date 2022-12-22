@@ -16,27 +16,36 @@ use std::io::{self, ErrorKind, Result, Read, Write, BufRead, BufReader};
 use std::result::Result as StdResult;
 use std::process::{Command, Stdio};
 use std::collections::{HashMap, HashSet};
+use std::sync::Arc;
 use httpdate::fmt_http_date;
 use urlencoding;
 
 
 fn main() -> StdResult<(), Error> {
     let port = env::args().nth(1).unwrap().parse()?;
+    let upstream = Arc::new(env::args().nth(2).unwrap_or(String::new()));
     let server = MicroHTTP::new(("0.0.0.0", port))?;
 
     loop {
         let client = server.next_client()?;
         if let Some(client) = client {
-            thread::spawn(move || handle_client(client));
+            let upstream = upstream.clone();
+            thread::spawn(move || handle_client(client, upstream));
         }
     }
 }
 
 
-fn handle_client(mut client: Client) -> Option<()> {
+fn handle_client(mut client: Client, upstream: Arc<String>) -> Option<()> {
     let (path_string, request) = client.request_mut().take()?;
 
-    let path = PathBuf::from(&path_string);
+    let path_string = if path_string.starts_with("/") {
+        &path_string[1..]
+    } else {
+        &path_string
+    };
+
+    let path = PathBuf::from(path_string);
 
     // Prevent accessing directories that are not descendants of /home by disabling
     // using parent directories (../) in paths.
@@ -46,8 +55,8 @@ fn handle_client(mut client: Client) -> Option<()> {
             _ => true
         }
     });
-    // Assuming first component is / and second is user name
-    let user = components.nth(1);
+    // Assuming first component is user name
+    let user = components.nth(0);
     let file_path = match user {
         Some(user) => {
             let path = components.fold(PathBuf::new(), |mut p, c| { p.push(c); p });
@@ -56,8 +65,8 @@ fn handle_client(mut client: Client) -> Option<()> {
         None => PathBuf::from("/home")
     };
 
-    let response_status = if file_path.is_dir() && !path_string.ends_with("/") {
-        client.respond("302 Found", &[], &vec![format!("Location: {}/", path_string)]).map(|_| ())
+    let response_status = if file_path.is_dir() && !path_string.ends_with("/") && path_string.len() > 0 {
+        client.respond("302 Found", &[], &vec![format!("Location: /{upstream}{path_string}/")]).map(|_| ())
     } else {
         match request {
             Request::GET(query, headers) => handle_get(&file_path, query, headers, client),
