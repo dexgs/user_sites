@@ -55,8 +55,19 @@ the directory:
     the page's ``<body>`` tag.
 - ``styles.css``: The page will try to apply this stylesheet.
 
-By default, all of these files are hidden from the directory index via a CSS rule,
-but this can be undone by overriding it in ``styles.css``.
+All of these files are hidden from the generated directory index.
+
+By default, the index will show the entire directory. However, if the query
+parameters `p` and `n` are defined, the directory will be paginated and the
+page with index `p` (starting at 1) will be shown where each page has `n` items
+(excepting the last page, which may have less).
+
+### Transclusion
+If an HTML file contains the following pattern `{file-path}` where `file-path`
+is a valid path (either absolute or relative to the HTML file), the contents
+of that file will be inserted into the page where the pattern occurs.
+
+(see [transclusion on Wikipedia](https://en.wikipedia.org/wiki/Help:Transclusion))
 
 ## Sample Nginx Configuration
 This is how you can proxy this program running on port ``1234``:
