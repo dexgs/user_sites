@@ -58,7 +58,7 @@ fn handle_client(mut client: Client, upstream: Arc<String>) -> Option<()> {
     let file_path = match user {
         Some(user) => {
             let path = components.fold(PathBuf::new(), |mut p, c| { p.push(c); p });
-            Path::new("/home").join(user).join("www").join(path)
+            Path::new("/home").join(user.as_os_str()).join("www").join(path)
         },
         None => PathBuf::from("/home")
     };
