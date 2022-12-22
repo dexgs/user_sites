@@ -67,7 +67,35 @@ fn handle_client(mut client: Client, upstream: Arc<String>) -> Option<()> {
     };
 
     let response_status = if file_path.is_dir() && !path_string.ends_with("/") {
-        client.respond("302 Found", &[], &vec![format!("Location: {upstream}{}/", path.display())]).map(|_| ())
+        let query = match request {
+            Request::GET(query, _) => Some(query),
+            Request::POST(_, Some(FormData::KeyVal(query))) => Some(query),
+            _ => None
+        };
+        let query_string = match query {
+            Some(query) => {
+                let mut query_string = String::with_capacity(1024);
+                if !query.is_empty() {
+                    query_string.push('?');
+                    for (i, (k, v)) in query.iter().enumerate() {
+                        if i > 0 {
+                            query_string.push('&');
+                        }
+                        query_string.push_str(k);
+                        if !v.is_empty() {
+                            query_string.push('=');
+                            query_string.push_str(v);
+                        }
+                    }
+                }
+                query_string
+            }
+            None => String::new()
+        };
+
+        let location = format!("Location: {upstream}{}/{}",
+                               path.display(), query_string);
+        client.respond("302 Found", &[], &vec![location]).map(|_| ())
     } else {
         match request {
             Request::GET(query, headers) => handle_get(&file_path, query, headers, client),
