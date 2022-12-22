@@ -139,7 +139,7 @@ impl Read for FileReader {
                 let bytes_read = d.reader.read(&mut read_into[bytes_written..])?;
                 bytes_written += bytes_read;
 
-                if bytes_read > 0 {
+                if bytes_read == 0 {
                     self.readers.pop();
                 }
 
