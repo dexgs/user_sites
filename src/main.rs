@@ -66,7 +66,7 @@ fn handle_client(mut client: Client, upstream: Arc<String>) -> Option<()> {
     };
 
     let response_status = if file_path.is_dir() && !path_string.ends_with("/") && path_string.len() > 0 {
-        client.respond("302 Found", &[], &vec![format!("Location: /{upstream}{path_string}/")]).map(|_| ())
+        client.respond("302 Found", &[], &vec![format!("Location: {upstream}{path_string}/")]).map(|_| ())
     } else {
         match request {
             Request::GET(query, headers) => handle_get(&file_path, query, headers, client),
