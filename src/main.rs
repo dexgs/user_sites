@@ -39,13 +39,11 @@ fn main() -> StdResult<(), Error> {
 fn handle_client(mut client: Client, upstream: Arc<String>) -> Option<()> {
     let (path_string, request) = client.request_mut().take()?;
 
-    let path_string = if path_string.starts_with("/") {
-        &path_string[1..]
+    let path = if path_string.starts_with("/") {
+        PathBuf::from(&path_string[1..])
     } else {
-        &path_string
+        PathBuf::from(&path_string)
     };
-
-    let path = PathBuf::from(path_string);
 
     // Prevent accessing directories that are not descendants of /home by disabling
     // using parent directories (../) in paths.
@@ -65,8 +63,8 @@ fn handle_client(mut client: Client, upstream: Arc<String>) -> Option<()> {
         None => PathBuf::from("/home")
     };
 
-    let response_status = if file_path.is_dir() && !path_string.ends_with("/") && path_string.len() > 0 {
-        client.respond("302 Found", &[], &vec![format!("Location: {upstream}{path_string}/")]).map(|_| ())
+    let response_status = if file_path.is_dir() && !path_string.ends_with("/") {
+        client.respond("302 Found", &[], &vec![format!("Location: {upstream}{}/", path.display())]).map(|_| ())
     } else {
         match request {
             Request::GET(query, headers) => handle_get(&file_path, query, headers, client),
