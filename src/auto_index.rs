@@ -1,26 +1,32 @@
 use std::path::{Path, PathBuf};
-use std::fs::{DirEntry, File};
+use std::fs::DirEntry;
 use std::io::{Result, Read};
-use std::cmp::Ordering;
+use std::cmp::{self, Ordering};
+use crate::file_reader::FileReader;
 use chrono::{DateTime, Local};
 use urlencoding::encode;
 
-// Add a CSS rule to hide the special files read by generate_index
-const CSS: &'static str = "
-        <style>
-            a[href=\"footer.html\"], a[href=\"header.html\"], a[href=\"styles.css\"], a[href=\"title\"] {
-                display: none !important;
-            }
-        </style>";
+fn is_special_file_name<S>(file_name: S) -> bool
+where S: AsRef<str> {
+    let file_name = file_name.as_ref();
 
-pub fn generate_index<F: 'static>(path: impl AsRef<Path>, header: Option<&str>, f: F) -> Result<String>
+    match file_name {
+        "header.html" | "footer.html" | "styles.css" | "title" => true,
+        _ => false
+    }
+}
+
+pub fn generate_index<F: 'static>(
+    path: impl AsRef<Path>, header: Option<&str>, f: F,
+    page_size: usize, page_number: usize) -> Result<String>
 where F: Fn(Result<DirEntry>) -> Option<DirEntry> {
     let path = path.as_ref();
     let mut entries: Vec<DirEntry> = path
         .read_dir()?
         .filter_map(f)
-        .filter(|f| {
-            f.metadata().is_ok() && f.metadata().unwrap().modified().is_ok()
+        .filter(|file| {
+            file.metadata().is_ok() && file.metadata().unwrap().modified().is_ok()
+            && !is_special_file_name(file.file_name().to_string_lossy())
         })
         .collect();
     // Sort entries (Directories first, then files) where each group is sorted
@@ -46,29 +52,82 @@ where F: Fn(Result<DirEntry>) -> Option<DirEntry> {
         display_path.to_owned()
     };
 
-    let head = format!("<title>{}</title>\n        <link rel=\"stylesheet\" href=\"styles.css\"/>", title);
+    let head = format!("<title>{}</title>\n<link rel=\"stylesheet\" href=\"styles.css\"/>\n<base href=\"./\"/>", title);
 
     // Set the page heading
-    let mut header = if let Some(header) = header {
+    let header = if let Some(header) = header {
         format!("   <h1>{}</h1>", header)
     } else if let Some(header) = read_file(path.join("header.html")) {
         header.trim_end().to_owned()
     } else {
         format!("    <h1>{}</h1>", display_path)
     };
-    header.push_str(CSS);
 
     // Build the page body
     let mut body = header;
-    body.push_str("
-        <div class=\"entries\">");
-    body.push_str("
+
+    if page_size == 0 {
+        // No pagination
+        body.push_str("
+            <ol class=\"entries\">");
+        body.push_str("
             <a href=\"../\">../<br/></a>");
-    for entry in entries {
-        body.push_str(&format_entry(&entry));
+
+        for entry in entries {
+            body.push_str(&format_entry(&entry));
+        }
+
+        body.push_str("
+            </ol>");
+    } else {
+        // Pagination
+        let num_pages = (entries.len() + page_size - 1) / page_size;
+        let last_index = entries.len() - 1;
+        let start = cmp::min(page_number * page_size, last_index);
+        let end = cmp::min(start + page_size - 1, last_index);
+
+        body.push_str(&format!("
+            <ol class=\"entries\" start=\"{}\">", start + 1));
+        body.push_str("
+            <a href=\"../\">../</a>");
+
+        for entry in &entries[start..=end] {
+            body.push_str(&format_entry(&entry));
+        }
+
+        body.push_str("
+            </ol>
+            <nav class=\"pagination\">");
+
+
+        let has_prev_page = start > 0;
+        let has_next_page = end < last_index;
+
+        if has_prev_page {
+            body.push_str(&format!("\n<a href=\".?p={}&n={}\">Prev. Page</a>",
+                                  page_number, page_size));
+        }
+
+        body.push_str(&format!("\n<form>
+                      <span class=\"page-number\" data-num-pages=\"{np}\">
+                          <label for=\"page-number-input\">Page #</label>
+                          <input id=\"page-number-input\" type=\"number\" name=\"p\" value=\"{p}\" min=\"1\" max=\"{np}\" size=\"4\"/>
+                      </span>
+                      <span class=\"page-size\">
+                          <label for=\"page-size-input\">Page Size</label>
+                          <input id=\"page-size-input\" type=\"number\" name=\"n\" value=\"{n}\" min=\"1\" width=\"2\" size=\"4\"/>
+                          <input type=\"submit\" value=\"Go\"/>
+                      </span>
+                      </form>",
+                      p = page_number + 1, np = num_pages, n = page_size));
+
+        if has_next_page {
+            body.push_str(&format!("\n<a href=\".?p={}&n={}\">Next Page</a>",
+                                  page_number + 2, page_size));
+        }
+
+        body.push_str("</nav>")
     }
-    body.push_str("
-        </div>");
 
     // Try loading a footer if one is available
     if let Some(footer) = read_file(path.join("footer.html")) { 
@@ -82,19 +141,21 @@ fn format_entry(entry: &DirEntry) -> String {
     let metadata = entry.metadata().unwrap();
     let last_modified = DateTime::<Local>::from(metadata.modified().unwrap()).format("%d/%m/%Y %T");
     let size = metadata.len();
-    let mut name = entry.file_name().to_str().unwrap_or("").to_owned();
+
+    let mut name = encode(entry.file_name().to_str().unwrap_or("")).to_string();
     if metadata.is_dir() {
         name.push_str("/");
     }
+
     format!("
-            <a href=\"{href}\" data-modified=\"{last_modified}\" data-size=\"{size}\">{name}<br/></a>",
-            href=encode(&name), last_modified=last_modified, size=size)
+            <li><a href=\"{href}\" data-modified=\"{last_modified}\" data-size=\"{size}\">{name}<br/></a></li>",
+            href=name, last_modified=last_modified, size=size)
 }
 
 fn read_file(file_path: PathBuf) -> Option<String> {
     let mut s = String::new();
-    let mut file = File::open(file_path).ok()?;
-    file.read_to_string(&mut s).ok()?;
+    let mut reader = FileReader::new(file_path).ok()?;
+    reader.read_to_string(&mut s).ok()?;
     s.push_str("\n");
     Some(s)
 }

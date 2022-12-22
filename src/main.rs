@@ -1,3 +1,11 @@
+#[macro_use]
+mod html_common;
+mod error_pages;
+mod auto_index;
+mod file_reader;
+
+use file_reader::FileReader;
+
 use std::env;
 use micro_http_server::{MicroHTTP, Client, Request, FormData};
 use anyhow::Error;
@@ -10,11 +18,6 @@ use std::process::{Command, Stdio};
 use std::collections::{HashMap, HashSet};
 use httpdate::fmt_http_date;
 use urlencoding;
-
-#[macro_use]
-mod html_common;
-mod error_pages;
-mod auto_index;
 
 
 fn main() -> StdResult<(), Error> {
@@ -31,7 +34,10 @@ fn main() -> StdResult<(), Error> {
 
 
 fn handle_client(mut client: Client) -> Option<()> {
-    let (path, request) = client.request_mut().take()?;
+    let (path_string, request) = client.request_mut().take()?;
+
+    let path = PathBuf::from(&path_string);
+
     // Prevent accessing directories that are not descendants of /home by disabling
     // using parent directories (../) in paths.
     let mut components = path.components().filter(|c| {
@@ -50,9 +56,13 @@ fn handle_client(mut client: Client) -> Option<()> {
         None => PathBuf::from("/home")
     };
 
-    let response_status = match request {
-        Request::GET(query, headers) => handle_get(&file_path, query, headers, client),
-        Request::POST(_, mut data) => handle_post(&file_path, &mut data, client)
+    let response_status = if file_path.is_dir() && !path_string.ends_with("/") {
+        client.respond("302 Found", &[], &vec![format!("Location: {}/", path_string)]).map(|_| ())
+    } else {
+        match request {
+            Request::GET(query, headers) => handle_get(&file_path, query, headers, client),
+            Request::POST(_, mut data) => handle_post(&file_path, &mut data, client)
+        }
     };
 
     if let Err(e) = response_status {
@@ -104,6 +114,11 @@ fn handle_get(
         && !file_path.ends_with("allowed_variables")
     {
         if file_path.is_dir() {
+            let page_size = query.get("n")
+                .and_then(|s| s.parse().ok()).unwrap_or(0);
+            let page_number = query.get("p")
+                .and_then(|s| s.parse().ok()).unwrap_or(1) - 1;
+
             // serve autoindex
             let index = if &file_path == &Path::new("/home") {
                 auto_index::generate_index(&file_path, Some("People"), |entry| {
@@ -113,9 +128,11 @@ fn handle_get(
                     } else {
                         None
                     }
-                })?
+                }, page_size, page_number)?
             } else {
-                auto_index::generate_index(&file_path, None, |entry| { entry.ok() })?
+                auto_index::generate_index(
+                    &file_path, None, |entry| { entry.ok() },
+                    page_size, page_number)?
             };
             client.respond(
                 "200 OK",
@@ -155,12 +172,15 @@ fn handle_get(
                 "Cache-Control: max-age=30".to_owned()
             ];
 
-            match open_file(&file_path) {
-                Ok((file, size)) => {
-                    client.respond_chunked("200 OK", file, size, &headers)?
+            match FileReader::new(&file_path) {
+                Ok(r) => {
+                    let size = r.get_size();
+                    client.respond_chunked("200 OK", r, size, &headers)?;
                 },
-                Err(_) => client.respond("500 Internal Server Error", error_pages::ERROR_500.as_bytes(), &vec![])?
-            };
+                Err(_) => {
+                    client.respond("500 Internal Server Error", error_pages::ERROR_500.as_bytes(), &vec![])?;
+                }
+            }
         }
     } else {
         client.respond("404 Not Found", error_pages::ERROR_404.as_bytes(), &vec![])?;
