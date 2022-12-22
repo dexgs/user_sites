@@ -160,9 +160,20 @@ impl Read for FileReader {
                 match ec.next(d.buf[d.start]) {
                     EscapeResult::Parse => match d.buf[d.start] {
                         TRANSCLUDE_START_BYTE => {
-                            if let Some(path) = transclude(d) {
-                                drop(self.add_file(path));
+                            d.buf.copy_within(d.start.., 0);
+                            d.end -= d.start;
+                            d.end += d.reader.read(&mut d.buf[d.end..])?;
+                            d.start = 0;
+
+                            match transclude(d) {
+                                Some(path) => drop(self.add_file(path)),
+                                None => {
+                                    let d = self.readers.last_mut().unwrap();
+                                    d.start = 0;
+                                    ec.consecutive_escapes = 1;
+                                }
                             }
+
                             break;
                         },
                         _ => {
@@ -189,24 +200,24 @@ fn transclude(d: &mut ReaderData) -> Option<PathBuf> {
     let mut bytes_written = 0;
     let mut ec = EscapeCounter::new();
 
-    d.start += 1;
-    d.buf.copy_within(d.start.., 0);
-    d.end -= d.start;
-    d.end += d.reader.read(&mut d.buf[d.end..]).ok()?;
-    d.start = 0;
-
     while d.start < d.end {
         match ec.next(d.buf[d.start]) {
             EscapeResult::Parse => match d.buf[d.start] {
                 TRANSCLUDE_END_BYTE => {
                     d.start += 1;
-                    let s = str::from_utf8(&d.buf[0..bytes_written]).ok()?;
+                    let s = str::from_utf8(&d.buf[1..bytes_written]).ok()?;
                     let path = PathBuf::from_str(s).ok()?;
 
-                    if path.is_relative() {
-                        return d.path.parent().map(|p| p.join(path));
+                    let path = if path.is_relative() {
+                        d.path.parent().map(|p| p.join(path))?
                     } else {
+                        path
+                    };
+
+                    if path.exists() {
                         return Some(path);
+                    } else {
+                        return None;
                     }
                 },
                 _ => {
