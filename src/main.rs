@@ -162,16 +162,26 @@ fn handle_get(
                     } else {
                         None
                     }
-                }, page_size, page_number)?
+                }, page_size, page_number)
             } else {
                 auto_index::generate_index(
                     &file_path, None, |entry| { entry.ok() },
-                    page_size, page_number)?
+                    page_size, page_number)
             };
-            client.respond(
-                "200 OK",
-                &index.as_bytes(),
-                &vec!["Cache-Control: max-age=30".to_owned()])?;
+
+            match index {
+                Ok(index) => {
+                    client.respond(
+                        "200 OK",
+                        &index.as_bytes(),
+                        &vec!["Cache-Control: max-age=30".to_owned()])?;
+                },
+                Err(_) => {
+                    client.respond(
+                        "500 Internal Server Error",
+                        error_pages::ERROR_500.as_bytes(), &vec![])?;
+                }
+            }
         } else if file_path.ends_with("index_executable") {
             let allowed_variables_file = get_adjacent_allowed_variables_file(&file_path)?;
             let allowed_variables = get_allowed_variables(allowed_variables_file)?;
