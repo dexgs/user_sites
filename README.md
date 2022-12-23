@@ -78,6 +78,7 @@ prefix `"/users/"`:
 ```nginx
 location /users/ {
     rewrite ^/users/(.*)$ /$1 break;
+    proxy_redirect '/' '/users/';
     proxy_pass http://127.0.0.1:1234;
 }
 ```
