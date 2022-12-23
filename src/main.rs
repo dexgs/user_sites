@@ -16,27 +16,24 @@ use std::io::{self, ErrorKind, Result, Read, Write, BufRead, BufReader};
 use std::result::Result as StdResult;
 use std::process::{Command, Stdio};
 use std::collections::{HashMap, HashSet};
-use std::sync::Arc;
 use httpdate::fmt_http_date;
 use urlencoding;
 
 
 fn main() -> StdResult<(), Error> {
     let port = env::args().nth(1).unwrap().parse()?;
-    let upstream = Arc::new(env::args().nth(2).unwrap_or(String::new()));
     let server = MicroHTTP::new(("0.0.0.0", port))?;
 
     loop {
         let client = server.next_client()?;
         if let Some(client) = client {
-            let upstream = upstream.clone();
-            thread::spawn(move || handle_client(client, upstream));
+            thread::spawn(move || handle_client(client));
         }
     }
 }
 
 
-fn handle_client(mut client: Client, upstream: Arc<String>) -> Option<()> {
+fn handle_client(mut client: Client) -> Option<()> {
     let (path_string, request) = client.request_mut().take()?;
 
     let path = if path_string.starts_with("/") {
@@ -93,8 +90,7 @@ fn handle_client(mut client: Client, upstream: Arc<String>) -> Option<()> {
             None => String::new()
         };
 
-        let location = format!("Location: {upstream}{}/{}",
-                               path.display(), query_string);
+        let location = format!("Location: {}/{}", path_string, query_string);
         client.respond("302 Found", &[], &vec![location]).map(|_| ())
     } else {
         match request {

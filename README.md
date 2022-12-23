@@ -7,10 +7,8 @@ Options may be added in the future, but the goal is to make the intended functio
 available with minimal setup.
 
 ## Usage
-To run, pass in 2 command line arguments. The first is the port to which the
-server will bind. The second is (optionally) the path prefix at which the user
-pages are served, i.e. if the program is proxied to serve user pages at
-`https://extamples/com/users/...`, the second argument should be `"/users/"`.
+To run, pass in 1 command line argument: the port to which the
+server will bind.
 
 The server will attempt to serve pages out of the ``www`` directory in a user's
 home dir. For example, running the server on port 1234 would make
